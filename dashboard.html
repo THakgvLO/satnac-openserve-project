@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Openserve EV Site Viability Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        #map { height: 60vh; width: 100%; border-radius: 0.5rem; }
+        .data-card { transition: all 0.2s; cursor: pointer; }
+        .data-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .red-bg { background-color: #fee2e2; border-left: 6px solid #ef4444; }
+        .amber-bg { background-color: #fffbeb; border-left: 6px solid #f59e0b; }
+        .green-bg { background-color: #ecfdf5; border-left: 6px solid #10b981; }
+        .loading-overlay { display: flex; justify-content: center; align-items: center; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255, 255, 255, 0.8); z-index: 10; }
+        /* Cluster styles for better visibility */
+        .marker-cluster-small { background-color: rgba(181, 226, 140, 0.6); }
+        .marker-cluster-small div { background-color: rgba(110, 204, 57, 0.6); }
+        .marker-cluster-medium { background-color: rgba(241, 211, 87, 0.6); }
+        .marker-cluster-medium div { background-color: rgba(240, 194, 12, 0.6); }
+        .marker-cluster-large { background-color: rgba(253, 156, 115, 0.6); }
+        .marker-cluster-large div { background-color: rgba(241, 128, 23, 0.6); }
+    </style>
+    <!-- Leaflet.js (Mapping Library) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    
+    <!-- Leaflet Marker Cluster Plugin -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-6 bg-white p-4 rounded-xl shadow-lg">
+            <h1 class="text-3xl font-extrabold text-gray-900">EV Site Viability Dashboard</h1>
+            <p class="text-gray-600 mt-1">Filtering viable Openserve Properties based on loadshedding risk (Now with map clustering).</p>
+        </header>
+
+        <!-- Filter Controls -->
+        <div class="flex flex-wrap gap-4 mb-6 p-4 bg-white rounded-xl shadow">
+            <div class="flex-1 min-w-[200px]">
+                <label for="cityFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by City</label>
+                <select id="cityFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+                <label for="suburbFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by Suburb</label>
+                <select id="suburbFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" disabled></select>
+            </div>
+        </div>
+
+        <!-- Map Visualization -->
+        <div id="map" class="shadow-xl mb-6 relative">
+            <div id="loadingMap" class="loading-overlay">
+                <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span id="loadingMessage" class="text-xl font-semibold text-gray-700">Loading data...</span>
+            </div>
+        </div>
+
+        <!-- Statistics and List -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div id="siteCount" class="bg-indigo-600 text-white p-4 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Total Viable Sites</p>
+                <p class="text-3xl font-bold mt-1">0</p>
+            </div>
+            <div id="greenCount" class="bg-green-600 text-white p-4 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Green Sites (Low Risk)</p>
+                <p class="text-3xl font-bold mt-1">0</p>
+            </div>
+            <div id="redCount" class="bg-red-600 text-white p-4 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Red Sites (High Risk)</p>
+                <p class="text-3xl font-bold mt-1">0</p>
+            </div>
+        </div>
+        
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">Site Listing (Click a row to center the map)</h2>
+        <div id="sitesList" class="space-y-3">
+            <!-- Site cards will be injected here -->
+        </div>
+
+    </div>
+
+    <script>
+        let sitesData = [];
+        let map;
+        // CHANGED: Using L.markerClusterGroup for better performance with large datasets
+        let markers = L.markerClusterGroup(); 
+        let currentFilter = { city: 'All', suburb: 'All' };
+
+        // Fallback demo data in case the fetch fails (unchanged)
+        const demoData = [
+            { id: "1638", site_type: "Openserve Property", lat: -26.87, lon: 26.66, city: "Klerksdorp", suburb: "Klerksdorp Central", address: "1 Main St, Klerksdorp", loadshedding_category: "GREEN", demand_index: 60, charging_radius_km: 40 },
+            { id: "UK06195-X1", site_type: "Openserve Property", lat: -31.01, lon: 23.00, city: "De Aar", suburb: "De Aar North", address: "2 Park Rd, De Aar", loadshedding_category: "AMBER", demand_index: 30, charging_radius_km: 40 },
+            { id: "1385", site_type: "Openserve Property", lat: -25.75, lon: 28.16, city: "Pretoria", suburb: "Hatfield", address: "Pretoria East Exchange", loadshedding_category: "AMBER", demand_index: 85, charging_radius_km: 40 },
+            { id: "1784", site_type: "Openserve Property", lat: -25.77, lon: 28.33, city: "Pretoria", suburb: "Wapadrand", address: "Pretoria East Exchange", loadshedding_category: "RED", demand_index: 85, charging_radius_km: 40 },
+            { id: "40", site_type: "Openserve Property", lat: -26.01, lon: 24.01, city: "Kimberley", suburb: "Kimberley CBD", address: "Kimberley Central", loadshedding_category: "GREEN", demand_index: 60, charging_radius_km: 40 },
+            { id: "1862", site_type: "Openserve Property", lat: -29.68, lon: 31.01, city: "Durban", suburb: "Umhlanga", address: "Umhlanga Ridge Office", loadshedding_category: "GREEN", demand_index: 85, charging_radius_km: 40 },
+            { id: "177", site_type: "Openserve Property", lat: -33.90, lon: 25.14, city: "Gqeberha", suburb: "Summerstrand", address: "Summerstrand Beachfront", loadshedding_category: "AMBER", demand_index: 60, charging_radius_km: 40 },
+            { id: "669", site_type: "Openserve Property", lat: -33.88, lon: 18.69, city: "Cape Town", suburb: "Bellville", address: "Bellville Tech Center", loadshedding_category: "RED", demand_index: 85, charging_radius_km: 40 },
+            { id: "709", site_type: "Openserve Property", lat: -33.83, lon: 18.65, city: "Cape Town", suburb: "Parow", address: "Parow Industrial Park", loadshedding_category: "GREEN", demand_index: 85, charging_radius_km: 40 },
+        ];
+
+
+        // --- DATA LOADING FUNCTION ---
+
+        async function loadSiteData() {
+            const loadingMessage = document.getElementById('loadingMessage');
+            try {
+                // Attempt to fetch the generated JSON file
+                loadingMessage.textContent = "Fetching sites...";
+                const response = await fetch('dashboard_data.json');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                loadingMessage.textContent = "Parsing data...";
+                sitesData = await response.json();
+
+                if (sitesData.length === 0) {
+                    throw new Error("JSON file is empty. Check categorization in dashboard_data.json.");
+                }
+
+                document.getElementById('loadingMap').style.display = 'none';
+                console.log(`Successfully loaded ${sitesData.length} sites from dashboard_data.json.`);
+
+            } catch (error) {
+                // Fallback to demo data if file fetch fails (common on local file systems)
+                console.warn(`[DATA LOAD WARNING] Could not fetch dashboard_data.json. Falling back to demo data. Error: ${error.message}`);
+                console.log("Ensure dashboard_data.json is in the same folder and correctly formatted with loadshedding categories.");
+                loadingMessage.textContent = "Failed to load custom data. Using 9 demo sites (Check Console for details).";
+                sitesData = demoData;
+                setTimeout(() => { document.getElementById('loadingMap').style.display = 'none'; }, 2000);
+            }
+        }
+
+        // --- MAPPING AND VISUALIZATION FUNCTIONS ---
+
+        function getMarkerColor(category) {
+            switch (category) {
+                case 'GREEN': return '#10B981'; // Tailwind green-500
+                case 'AMBER': return '#F59E0B'; // Tailwind amber-500
+                case 'RED': return '#EF4444'; // Tailwind red-500
+                default: return '#6B7280'; // Gray (UNCATEGORIZED)
+            }
+        }
+
+        function createMap() {
+            // Initialize map centered over South Africa
+            map = L.map('map').setView([-28.0, 24.0], 5); 
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+            
+            // Add the cluster group to the map
+            markers.addTo(map);
+        }
+
+        function renderMap(data) {
+            // Clear all existing markers from the cluster group
+            markers.clearLayers();
+            
+            data.forEach(site => {
+                // Skip rendering if LAT/LON is invalid or missing
+                if (isNaN(site.lat) || isNaN(site.lon)) return; 
+
+                const color = getMarkerColor(site.loadshedding_category);
+                
+                // 1. Marker (using CircleMarker for custom color, which works with clustering)
+                const marker = L.circleMarker([site.lat, site.lon], {
+                    radius: 8,
+                    fillColor: color,
+                    color: '#000',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                });
+
+                // Popup Content
+                const popupContent = `
+                    <div class="font-bold text-lg">${site.id} (${site.loadshedding_category})</div>
+                    <div class="text-sm">
+                        <p><strong>Location:</strong> ${site.suburb}, ${site.city}</p>
+                        <p><strong>Address:</strong> ${site.address}</p>
+                        <p><strong>Est. EV Demand:</strong> ${site.demand_index}%</p>
+                        <p><strong>Charging Range:</strong> ${site.charging_radius_km} km radius</p>
+                    </div>
+                `;
+                marker.bindPopup(popupContent);
+
+                // Add the marker to the cluster group
+                marker.addTo(markers);
+
+                // Click event to link marker to list item
+                marker.on('click', () => {
+                    const listItem = document.getElementById(`site-${site.id}`);
+                    if (listItem) {
+                        listItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        // Briefly highlight the list item
+                        listItem.classList.add('shadow-2xl', 'scale-105');
+                        setTimeout(() => listItem.classList.remove('shadow-2xl', 'scale-105'), 1500);
+                    }
+                });
+            });
+
+            // Adjust map view to fit all markers
+            if (data.length > 0) {
+                map.fitBounds(markers.getBounds(), { padding: [50, 50] });
+            } else {
+                 map.setView([-28.0, 24.0], 5); // Center on SA if no results
+            }
+        }
+
+        function renderSiteList(data) {
+            const listContainer = document.getElementById('sitesList');
+            listContainer.innerHTML = '';
+            
+            data.forEach(site => {
+                const category = site.loadshedding_category.toUpperCase();
+                const colorClass = category === 'RED' ? 'red-bg' : category === 'AMBER' ? 'amber-bg' : category === 'GREEN' ? 'green-bg' : 'bg-gray-200';
+                const demandColor = site.demand_index > 70 ? 'text-green-600' : site.demand_index > 40 ? 'text-amber-600' : 'text-red-600';
+                
+                const card = document.createElement('div');
+                card.id = `site-${site.id}`;
+                card.className = `data-card p-4 bg-white rounded-xl shadow flex justify-between items-center ${colorClass}`;
+                
+                card.innerHTML = `
+                    <div>
+                        <p class="text-lg font-semibold">${site.id} - ${site.city}, ${site.suburb}</p>
+                        <p class="text-sm text-gray-600">${site.address}</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="font-bold text-xl">${category}</p>
+                        <p class="text-sm ${demandColor}">Demand: ${site.demand_index}%</p>
+                    </div>
+                `;
+
+                card.addEventListener('click', () => {
+                    if (!isNaN(site.lat) && !isNaN(site.lon)) {
+                        // Fly to the marker location
+                        map.flyTo([site.lat, site.lon], 14); 
+
+                        // Find the corresponding marker and open its popup
+                        markers.eachLayer(layer => {
+                            // Check if the marker's coordinates match the site's coordinates
+                            if (layer.getLatLng().lat.toFixed(6) === site.lat.toFixed(6) && 
+                                layer.getLatLng().lng.toFixed(6) === site.lon.toFixed(6)) {
+                                
+                                // Zoom to the marker first to ensure it's visible, then open the popup
+                                markers.zoomToShowLayer(layer, () => {
+                                    layer.openPopup();
+                                });
+                            }
+                        });
+                    }
+                });
+                
+                listContainer.appendChild(card);
+            });
+        }
+
+        function updateStats(data) {
+            document.getElementById('siteCount').querySelector('p:last-child').textContent = data.length;
+            
+            const greenCount = data.filter(s => s.loadshedding_category === 'GREEN').length;
+            const amberCount = data.filter(s => s.loadshedding_category === 'AMBER').length;
+            const redCount = data.filter(s => s.loadshedding_category === 'RED').length;
+            
+            document.getElementById('greenCount').querySelector('p:last-child').textContent = greenCount;
+            document.getElementById('redCount').querySelector('p:last-child').textContent = redCount;
+        }
+
+
+        // --- FILTERING AND INIT FUNCTIONS ---
+
+        function getUniqueValues(key) {
+            // Only use data that has been loaded
+            if (sitesData.length === 0) return ['All'];
+            return ['All', ...new Set(sitesData.map(site => site[key]).filter(Boolean).sort())];
+        }
+
+        function populateFilters() {
+            const cityFilter = document.getElementById('cityFilter');
+            const suburbFilter = document.getElementById('suburbFilter');
+
+            // Reset filters
+            cityFilter.innerHTML = '';
+            suburbFilter.innerHTML = '';
+            
+            getUniqueValues('city').forEach(city => {
+                cityFilter.add(new Option(city, city));
+            });
+            
+            // Initial load for suburbs (only 'All' unless a city is selected)
+            suburbFilter.add(new Option('All', 'All'));
+            suburbFilter.disabled = true;
+
+            cityFilter.addEventListener('change', (e) => {
+                currentFilter.city = e.target.value;
+                currentFilter.suburb = 'All'; // Reset suburb on city change
+                
+                // Repopulate suburb filter based on selected city
+                suburbFilter.innerHTML = '';
+                suburbFilter.add(new Option('All', 'All'));
+
+                if (currentFilter.city !== 'All') {
+                    suburbFilter.disabled = false;
+                    const availableSuburbs = sitesData
+                        .filter(site => site.city === currentFilter.city)
+                        .map(site => site.suburb)
+                        .filter(Boolean); // Filter out null/empty suburbs
+                    
+                    [...new Set(availableSuburbs)].sort().forEach(suburb => {
+                        suburbFilter.add(new Option(suburb, suburb));
+                    });
+                } else {
+                    suburbFilter.disabled = true;
+                }
+                
+                filterAndRender();
+            });
+
+            suburbFilter.addEventListener('change', (e) => {
+                currentFilter.suburb = e.target.value;
+                filterAndRender();
+            });
+        }
+
+        function filterAndRender() {
+            let filteredData = sitesData;
+
+            if (currentFilter.city !== 'All') {
+                filteredData = filteredData.filter(site => site.city === currentFilter.city);
+            }
+
+            if (currentFilter.suburb !== 'All') {
+                filteredData = filteredData.filter(site => site.suburb === currentFilter.suburb);
+            }
+            
+            // Re-render components with the new filtered data
+            renderMap(filteredData);
+            renderSiteList(filteredData);
+            updateStats(filteredData);
+        }
+
+        // Initial setup
+        window.onload = async () => {
+            createMap();
+            await loadSiteData();
+            populateFilters();
+            filterAndRender();
+        };
+
+    </script>
+</body>
+</html>
