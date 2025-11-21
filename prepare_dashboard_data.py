@@ -6,7 +6,7 @@ import sys
 INPUT_CSV_FILE = "Openserve_Sites_Geocoded.csv"
 OUTPUT_JSON_FILE = "dashboard_data.json"
 
-# Thresholds for colour-coding (These are placeholders that need manual assignment)
+# Thresholds for colour-coding
 LOADSHEDDING_CATEGORIES = {
     'GREEN': 'Max 4 hours/month',
     'AMBER': 'Max 8 hours/month',
@@ -83,7 +83,7 @@ def filter_and_export():
         
         print("\n--- NEXT STEP INSTRUCTIONS ---")
         print(f"1. A filtered list of sites is saved to: {OUTPUT_JSON_FILE}")
-        print("2. You MUST manually edit this JSON file, replacing 'UNCATEGORIZED' with 'GREEN', 'AMBER', or 'RED' for each site based on your loadshedding risk assessment.")
+        print("2. This JSON file will be updated in the AI model script, replacing 'UNCATEGORIZED' with 'GREEN', 'AMBER', or 'RED' for each site based on your loadshedding risk assessment.")
         print("3. Once updated, open 'dashboard.html' and replace its internal 'sitesData' array with the contents of your updated dashboard_data.json.")
 
     except Exception as e:

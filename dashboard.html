@@ -4,31 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Openserve EV Site Viability Dashboard</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Inter Font -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script> 
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
-        #map { height: 60vh; width: 100%; border-radius: 0.5rem; }
-        .data-card { transition: all 0.2s; cursor: pointer; }
-        .data-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        /* Map height is now defined via Tailwind in the HTML structure */
+        
+        /* Custom styles for colored list cards */
+        .data-card { 
+            transition: all 0.2s; 
+            cursor: pointer; 
+            color: #1f2937; /* Gray-800 */
+        }
+        .data-card:hover { 
+            transform: translateY(-2px); 
+            box-shadow: 0 8px 16px -3px rgba(0, 0, 0, 0.1); /* Stronger lift on hover */
+        }
+
+        /* Loadshedding Category Colors */
         .red-bg { background-color: #fee2e2; border-left: 6px solid #ef4444; }
-        .amber-bg { background-color: #fffbeb; border-left: 6px solid #f59e0b; }
+        .amber-bg { background-color: #fffbeb; border-left: 6px solid #d97706; }
         .green-bg { background-color: #ecfdf5; border-left: 6px solid #10b981; }
-        .loading-overlay { display: flex; justify-content: center; align-items: center; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255, 255, 255, 0.8); z-index: 10; }
-        /* Cluster styles for better visibility */
+
+        .select-wrapper { position: relative; }
+        .select-wrapper::after {
+            content: '▼';
+            font-size: 0.75rem;
+            color: #6b7280;
+            top: 50%;
+            right: 1rem;
+            transform: translateY(-50%);
+            pointer-events: none;
+            position: absolute;
+        }
+
+        /* Leaflet Cluster Styles */
         .marker-cluster-small { background-color: rgba(181, 226, 140, 0.6); }
         .marker-cluster-small div { background-color: rgba(110, 204, 57, 0.6); }
         .marker-cluster-medium { background-color: rgba(241, 211, 87, 0.6); }
         .marker-cluster-medium div { background-color: rgba(240, 194, 12, 0.6); }
         .marker-cluster-large { background-color: rgba(253, 156, 115, 0.6); }
         .marker-cluster-large div { background-color: rgba(241, 128, 23, 0.6); }
+
+        .loading-overlay { display: flex; justify-content: center; align-items: center; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255, 255, 255, 0.8); z-index: 10; }
+        
+        /* Utility for score ring visual */
+        .score-ring {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.5rem;
+            background: conic-gradient(
+                #10b981 0% var(--score-percent),
+                #e5e7eb var(--score-percent) 100%
+            );
+        }
+        .score-ring-inner {
+            background-color: white;
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #1f2937;
+        }
     </style>
-    <!-- Leaflet.js (Mapping Library) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     
-    <!-- Leaflet Marker Cluster Plugin -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
     <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
@@ -36,119 +88,450 @@
 <body class="p-4 sm:p-8">
 
     <div class="max-w-7xl mx-auto">
-        <header class="mb-6 bg-white p-4 rounded-xl shadow-lg">
+        <header class="mb-6 bg-white p-4 rounded-xl shadow-xl">
             <h1 class="text-3xl font-extrabold text-gray-900">EV Site Viability Dashboard</h1>
-            <p class="text-gray-600 mt-1">Filtering viable Openserve Properties based on loadshedding risk (Now with map clustering).</p>
+            <p class="text-gray-600 mt-1">Filtering viable Openserve Properties based on loadshedding risk and weighted score.</p>
         </header>
 
-        <!-- Filter Controls -->
-        <div class="flex flex-wrap gap-4 mb-6 p-4 bg-white rounded-xl shadow">
+        <!-- Global Filters Section -->
+        <div class="flex flex-wrap gap-4 mb-6 p-4 bg-white rounded-xl shadow-lg">
             <div class="flex-1 min-w-[200px]">
-                <label for="cityFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by City</label>
-                <select id="cityFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"></select>
+                <label for="searchFilter" class="block text-sm font-medium text-gray-700 mb-1">Search (ID or Address)</label>
+                <div class="relative">
+                    <input type="text" id="searchFilter" placeholder="e.g., 1859, Pretoria, Ubuntu" class="w-full p-2 pl-10 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500">
+                    <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
             </div>
-            <div class="flex-1 min-w-[200px]">
-                <label for="suburbFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by Suburb</label>
-                <select id="suburbFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" disabled></select>
-            </div>
-        </div>
 
-        <!-- Map Visualization -->
-        <div id="map" class="shadow-xl mb-6 relative">
-            <div id="loadingMap" class="loading-overlay">
-                <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span id="loadingMessage" class="text-xl font-semibold text-gray-700">Loading data...</span>
+            <div class="flex-1 min-w-[150px]">
+                <label for="cityFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by City/Town/Municipality</label>
+                <div class="select-wrapper">
+                    <select id="cityFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 appearance-none pr-8 bg-white"></select>
+                </div>
             </div>
-        </div>
-
-        <!-- Statistics and List -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <div id="siteCount" class="bg-indigo-600 text-white p-4 rounded-xl shadow-lg">
-                <p class="text-sm font-medium opacity-80">Total Viable Sites</p>
-                <p class="text-3xl font-bold mt-1">0</p>
-            </div>
-            <div id="greenCount" class="bg-green-600 text-white p-4 rounded-xl shadow-lg">
-                <p class="text-sm font-medium opacity-80">Green Sites (Low Risk)</p>
-                <p class="text-3xl font-bold mt-1">0</p>
-            </div>
-            <div id="redCount" class="bg-red-600 text-white p-4 rounded-xl shadow-lg">
-                <p class="text-sm font-medium opacity-80">Red Sites (High Risk)</p>
-                <p class="text-3xl font-bold mt-1">0</p>
+            
+            <div class="flex-1 min-w-[150px]">
+                <label for="categoryFilter" class="block text-sm font-medium text-gray-700 mb-1">Filter by Risk</label>
+                <div class="select-wrapper">
+                    <select id="categoryFilter" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 appearance-none pr-8 bg-white"></select>
+                </div>
             </div>
         </div>
         
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">Site Listing (Click a row to center the map)</h2>
-        <div id="sitesList" class="space-y-3">
-            <!-- Site cards will be injected here -->
+        <!-- Global Stats Section (Moved up, unchanged) -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div id="siteCount" class="bg-indigo-600 text-white p-3 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Total Sites</p>
+                <p class="text-2xl font-bold mt-0">0</p>
+            </div>
+            <div id="greenCount" class="bg-green-600 text-white p-3 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Green (Low)</p>
+                <p class="text-2xl font-bold mt-0">0</p>
+            </div>
+            <div id="amberCount" class="bg-amber-700 text-white p-3 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Amber (Moderate)</p>
+                <p class="text-2xl font-bold mt-0">0</p>
+            </div>
+            <div id="redCount" class="bg-red-600 text-white p-3 rounded-xl shadow-lg">
+                <p class="text-sm font-medium opacity-80">Red (High)</p>
+                <p class="text-2xl font-bold mt-0">0</p>
+            </div>
         </div>
 
+        <!-- MAIN LAYOUT: Map (Left) and Site Listing (Right) -->
+        <div class="flex flex-col lg:flex-row gap-6 mb-6">
+            
+            <!-- Map Container (Left side - larger) -->
+            <div class="w-full lg:w-3/5">
+                <div id="map" class="shadow-xl relative h-[60vh] min-h-[400px]">
+                    <div id="loadingMap" class="loading-overlay">
+                        <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span id="loadingMessage" class="text-xl font-semibold text-gray-700">Loading data...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Site Listing (Right side - smaller, scrollable) -->
+            <div class="w-full lg:w-2/5">
+                <h2 class="text-xl font-bold text-gray-900 mb-3">Site Listing (Click to view details)</h2>
+                <div id="sitesListWrapper" class="max-h-[60vh] overflow-y-auto pr-2">
+                    <div id="sitesList" class="space-y-3">
+                        <!-- Site list items will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SITE DETAILS PANEL (Hidden until a site is clicked) -->
+        <div id="siteDetailsPanel" class="bg-white p-6 rounded-xl shadow-2xl transition-all duration-300 hidden">
+            <div class="flex justify-between items-start mb-4 border-b pb-4">
+                <h2 id="detailSiteTitle" class="text-3xl font-extrabold text-indigo-800">Site Details: [ID]</h2>
+                <span id="detailRiskCategory" class="text-2xl font-bold px-3 py-1 rounded-full text-white bg-green-600">GREEN</span>
+            </div>
+
+            <!-- Top Row: Score Card and Key Metrics -->
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
+                <!-- Overall Site Score Card -->
+                <div class="col-span-2 lg:col-span-1 flex flex-col items-center justify-center p-4 bg-gray-50 rounded-lg shadow-inner">
+                    <p class="text-sm font-semibold text-gray-600 mb-2">OVERALL VIABILITY SCORE</p>
+                    <div id="scoreRingContainer" class="score-ring" style="--score-percent: 0%;">
+                        <div class="score-ring-inner">
+                            <span id="detailScoreValue" class="text-3xl font-extrabold">0.00</span>
+                            <span class="text-xs font-medium text-gray-500">/ 100</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Metric Boxes -->
+                <div class="col-span-2 lg:col-span-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="p-3 bg-blue-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-blue-800">Loadshedding (Model) — Raw</p>
+                        <p id="detailLoadsheddingScore" class="text-xl font-bold mt-1 text-blue-900">N/A</p>
+                    </div>
+                    <div class="p-3 bg-red-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-red-800">Security / Crime (Model)</p>
+                        <p id="detailSecurityScore" class="text-xl font-bold mt-1 text-red-900">N/A</p>
+                    </div>
+                    <div class="p-3 bg-green-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-green-800">Local EV Demand (Model)</p>
+                        <p id="detailDemandIndex" class="text-xl font-bold mt-1 text-green-900">N/A</p>
+                    </div>
+                    <div class="p-3 bg-yellow-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-yellow-800">Permitting / Approvals (Model)</p>
+                        <p id="detailPermittingScore" class="text-xl font-bold mt-1 text-yellow-900">N/A</p>
+                    </div>
+
+                    <!-- Additional model factors (will wrap to new row if needed) -->
+                    <div class="p-3 bg-indigo-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-indigo-800">Interoperability / Proximity (Hindsight)</p>
+                        <p id="detailInteropScore" class="text-xl font-bold mt-1 text-indigo-900">N/A</p>
+                    </div>
+                    <div class="p-3 bg-emerald-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-emerald-800">Infrastructure (Physical)</p>
+                        <p id="detailInfrastructureScore" class="text-xl font-bold mt-1 text-emerald-900">N/A</p>
+                    </div>
+                    <div class="p-3 bg-gray-50 rounded-lg shadow-md">
+                        <p class="text-xs font-medium text-gray-800">Operational Cost (Model)</p>
+                        <p id="detailOpCostScore" class="text-xl font-bold mt-1 text-gray-900">N/A</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Row: Weighting Breakdown and Line Graph -->
+            <div class="flex flex-col xl:flex-row gap-6">
+                
+                <!-- Weighting Breakdown (Table/List) -->
+                <div class="w-full xl:w-1/3 p-4 bg-gray-50 rounded-lg shadow-md">
+                    <h3 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Scoring Component Breakdown</h3>
+                    <ul id="weightingsList" class="space-y-3">
+                        <!-- Updated to reflect ml_model.py factors & weights (no layout or color changes) -->
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Grid Stability (Loadshedding) (Weight: 25%)</span>
+                            <span id="wGrid" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Security / Crime (Weight: 20%)</span>
+                            <span id="wSecurity" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Local EV Demand (Weight: 20%)</span>
+                            <span id="wDemand" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Permitting / Approvals (Weight: 10%)</span>
+                            <span id="wPermitting" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Interoperability / Proximity (Hindsight) (Weight: 8%)</span>
+                            <span id="wInterop" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Physical / Infrastructure (Weight: 7%)</span>
+                            <span id="wInfrastructure" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between text-sm">
+                            <span class="text-gray-600">Operational Cost (Weight: 10%)</span>
+                            <span id="wOpCost" class="font-bold text-gray-800">N/A</span>
+                        </li>
+                        <li class="flex justify-between pt-3 border-t mt-3 text-sm font-bold text-indigo-800">
+                            <span>TOTAL WEIGHTED SCORE</span>
+                            <span id="wTotal" class="text-lg">N/A</span>
+                        </li>
+                    </ul>
+                </div>
+                
+                <!-- Line Graph Placeholder -->
+                <div class="w-full xl:w-2/3 p-4 bg-gray-50 rounded-lg shadow-md">
+                    <h3 class="text-lg font-semibold mb-3 text-gray-800 border-b pb-2">Component Score and Weighted Contribution</h3>
+                    <div class="relative h-64">
+                        <canvas id="viabilityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+        </div>
     </div>
 
     <script>
         let sitesData = [];
         let map;
-        // CHANGED: Using L.markerClusterGroup for better performance with large datasets
         let markers = L.markerClusterGroup(); 
-        let currentFilter = { city: 'All', suburb: 'All' };
+        let currentFilter = { search: '', city: 'All', category: 'All' };
+        let viabilityChart; // Variable to hold the Chart.js instance
 
-        // Fallback demo data in case the fetch fails (unchanged)
+        // JS copy of the model weights (kept in sync with ml_model.py)
+        const WEIGHTS_JS = {
+            'loadshedding': 0.25,
+            'security': 0.20,
+            'demand': 0.20,
+            'permitting': 0.10,
+            'interop': 0.08,
+            'physical': 0.07,
+            'opCost': 0.10
+        };
+
+        // --- MOCK/ENRICHED DATA FOR DETAILS PANEL ---
+        // Adding more detailed fields to the demo data to power the new details panel.
         const demoData = [
-            { id: "1638", site_type: "Openserve Property", lat: -26.87, lon: 26.66, city: "Klerksdorp", suburb: "Klerksdorp Central", address: "1 Main St, Klerksdorp", loadshedding_category: "GREEN", demand_index: 60, charging_radius_km: 40 },
-            { id: "UK06195-X1", site_type: "Openserve Property", lat: -31.01, lon: 23.00, city: "De Aar", suburb: "De Aar North", address: "2 Park Rd, De Aar", loadshedding_category: "AMBER", demand_index: 30, charging_radius_km: 40 },
-            { id: "1385", site_type: "Openserve Property", lat: -25.75, lon: 28.16, city: "Pretoria", suburb: "Hatfield", address: "Pretoria East Exchange", loadshedding_category: "AMBER", demand_index: 85, charging_radius_km: 40 },
-            { id: "1784", site_type: "Openserve Property", lat: -25.77, lon: 28.33, city: "Pretoria", suburb: "Wapadrand", address: "Pretoria East Exchange", loadshedding_category: "RED", demand_index: 85, charging_radius_km: 40 },
-            { id: "40", site_type: "Openserve Property", lat: -26.01, lon: 24.01, city: "Kimberley", suburb: "Kimberley CBD", address: "Kimberley Central", loadshedding_category: "GREEN", demand_index: 60, charging_radius_km: 40 },
-            { id: "1862", site_type: "Openserve Property", lat: -29.68, lon: 31.01, city: "Durban", suburb: "Umhlanga", address: "Umhlanga Ridge Office", loadshedding_category: "GREEN", demand_index: 85, charging_radius_km: 40 },
-            { id: "177", site_type: "Openserve Property", lat: -33.90, lon: 25.14, city: "Gqeberha", suburb: "Summerstrand", address: "Summerstrand Beachfront", loadshedding_category: "AMBER", demand_index: 60, charging_radius_km: 40 },
-            { id: "669", site_type: "Openserve Property", lat: -33.88, lon: 18.69, city: "Cape Town", suburb: "Bellville", address: "Bellville Tech Center", loadshedding_category: "RED", demand_index: 85, charging_radius_km: 40 },
-            { id: "709", site_type: "Openserve Property", lat: -33.83, lon: 18.65, city: "Cape Town", suburb: "Parow", address: "Parow Industrial Park", loadshedding_category: "GREEN", demand_index: 85, charging_radius_km: 40 },
+            // Note: Total_Weighted_Score should be calculated from the component scores
+            { id: "1638", site_type: "Openserve Property", lat: -26.87, lon: 26.66, city: "Klerksdorp", suburb: "Klerksdorp Central", address: "1 Main St, Klerksdorp", loadshedding_category: "GREEN", demand_index: 85, Total_Weighted_Score: 88.5, ls_score: 95, infra_score: 80, prox_score: 90, trend_data: [90, 85, 88, 92, 95, 87, 89, 90, 93, 85, 80, 88]},
+            { id: "UK06195-X1", site_type: "Openserve Property", lat: -31.01, lon: 23.00, city: "De Aar", suburb: "De Aar North", address: "2 Park Rd, De Aar", loadshedding_category: "AMBER", demand_index: 60, Total_Weighted_Score: 65.2, ls_score: 55, infra_score: 70, prox_score: 75, trend_data: [70, 72, 68, 65, 60, 62, 65, 68, 70, 65, 60, 65]},
+            { id: "1385", site_type: "Openserve Property", lat: -25.75, lon: 28.16, city: "Pretoria", suburb: "Hatfield", address: "Pretoria East Exchange", loadshedding_category: "AMBER", demand_index: 70, Total_Weighted_Score: 75.1, ls_score: 65, infra_score: 85, prox_score: 70, trend_data: [75, 78, 76, 74, 72, 75, 78, 80, 82, 75, 70, 75]},
+            { id: "1784", site_type: "Openserve Property", lat: -25.77, lon: 28.33, city: "Pretoria", suburb: "Wapadrand", address: "Pretoria East Exchange", loadshedding_category: "RED", demand_index: 40, Total_Weighted_Score: 45.8, ls_score: 30, infra_score: 50, prox_score: 60, trend_data: [50, 48, 45, 42, 40, 45, 48, 50, 52, 45, 40, 45]},
+            { id: "40", site_type: "Openserve Property", lat: -26.01, lon: 24.01, city: "Kimberley", suburb: "Kimberley CBD", address: "Kimberley Central", loadshedding_category: "GREEN", demand_index: 90, Total_Weighted_Score: 92.0, ls_score: 90, infra_score: 95, prox_score: 90, trend_data: [95, 92, 90, 93, 94, 95, 92, 90, 93, 94, 95, 92]},
+            { id: "1862", site_type: "Openserve Property", lat: -29.68, lon: 31.01, city: "Durban", suburb: "Umhlanga", address: "Umhlanga Ridge Office", loadshedding_category: "GREEN", demand_index: 80, Total_Weighted_Score: 82.3, ls_score: 85, infra_score: 75, prox_score: 85, trend_data: [80, 82, 85, 83, 80, 82, 85, 83, 80, 82, 85, 83]},
+            { id: "177", site_type: "Openserve Property", lat: -33.90, lon: 25.14, city: "Gqeberha", suburb: "Summerstrand", address: "Summerstrand Beachfront", loadshedding_category: "AMBER", demand_index: 50, Total_Weighted_Score: 58.9, ls_score: 60, infra_score: 65, prox_score: 55, trend_data: [60, 62, 60, 58, 55, 50, 55, 60, 62, 60, 58, 55]},
+            { id: "669", site_type: "Openserve Property", lat: -33.88, lon: 18.69, city: "Cape Town", suburb: "Bellville", address: "Bellville Tech Center", loadshedding_category: "RED", demand_index: 30, Total_Weighted_Score: 35.6, ls_score: 25, infra_score: 40, prox_score: 45, trend_data: [40, 38, 35, 32, 30, 35, 38, 40, 42, 35, 30, 35]},
+            { id: "709", site_type: "Openserve Property", lat: -33.83, lon: 18.65, city: "Cape Town", suburb: "Parow", address: "Parow Industrial Park", loadshedding_category: "GREEN", demand_index: 95, Total_Weighted_Score: 95.8, ls_score: 98, infra_score: 90, prox_score: 95, trend_data: [98, 95, 96, 97, 98, 95, 96, 97, 98, 95, 96, 97]},
         ];
 
 
         // --- DATA LOADING FUNCTION ---
 
-        async function loadSiteData() {
-            const loadingMessage = document.getElementById('loadingMessage');
-            try {
-                // Attempt to fetch the generated JSON file
-                loadingMessage.textContent = "Fetching sites...";
-                const response = await fetch('dashboard_data.json');
+        // Function to convert CSV text to an array of objects
+        function csvToJSON(csvText) {
+            const lines = csvText.trim().split('\n');
+            if (lines.length === 0) return [];
+            
+            // Get headers and normalize them
+            const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+            
+            const result = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                if (values.length !== headers.length) {
+                    // console.warn(`Skipping line ${i + 1} due to column mismatch.`);
+                    continue;
+                }
+
+                const obj = {};
+                for (let j = 0; j < headers.length; j++) {
+                    const header = headers[j];
+                    let value = values[j];
+                    
+                    // Convert numeric fields and map headers
+                    if (['Latitude', 'Longitude', 'Synthetic_Risk_Score', 'Demand_Index', 'Total_Weighted_Score', 'LS_Score', 'Infrastructure_Score', 'Proximity_Score'].includes(header)) {
+                        value = parseFloat(value);
+                    }
+                    
+                    switch (header) {
+                        case 'Factor_Scores': 
+                        try {
+                            obj['Factor_Scores'] = JSON.parse(value);
+                            // Map the individual scores to dedicated fields for easy access (0-10 scale from Python)
+                            obj['ls_score'] = obj['Factor_Scores']['loadshedding']; // Was 'LS_Score'
+                            obj['demand_index'] = obj['Factor_Scores']['demand'] * 10; // Scale 0-10 to 0-100 for display consistency
+                            obj['infra_score'] = obj['Factor_Scores']['physical']; // Proxy for infrastructure
+                            obj['prox_score'] = obj['Factor_Scores']['security']; // Proxy for proximity/security
+                        } catch (e) {
+                            obj['Factor_Scores'] = {};
+                        }
+                            break;
+                        case 'Risk_Category': 
+                        case 'Adjusted_Risk_Category': // Use the final category from Python
+                            obj['loadshedding_category'] = value ? value.toUpperCase() : 'UNCATEGORIZED'; 
+                            break;
+                        case 'Final_Classification': // Map 'Ready'/'Risky' to dashboard categories
+                            obj['site_classification'] = value;
+                            break;
+                    }
                 }
                 
-                loadingMessage.textContent = "Parsing data...";
-                sitesData = await response.json();
-
-                if (sitesData.length === 0) {
-                    throw new Error("JSON file is empty. Check categorization in dashboard_data.json.");
+                // Add mock trend data if it's not in the CSV
+                if (!obj.trend_data) {
+                    const baseScore = obj.Total_Weighted_Score || 65;
+                    obj.trend_data = Array.from({length: 12}, (_, i) => Math.min(100, Math.max(30, baseScore + Math.sin(i / 2) * 15 + Math.random() * 10 - 5))).map(x => parseFloat(x.toFixed(1)));
                 }
 
-                document.getElementById('loadingMap').style.display = 'none';
-                console.log(`Successfully loaded ${sitesData.length} sites from dashboard_data.json.`);
-
-            } catch (error) {
-                // Fallback to demo data if file fetch fails (common on local file systems)
-                console.warn(`[DATA LOAD WARNING] Could not fetch dashboard_data.json. Falling back to demo data. Error: ${error.message}`);
-                console.log("Ensure dashboard_data.json is in the same folder and correctly formatted with loadshedding categories.");
-                loadingMessage.textContent = "Failed to load custom data. Using 9 demo sites (Check Console for details).";
-                sitesData = demoData;
-                setTimeout(() => { document.getElementById('loadingMap').style.display = 'none'; }, 2000);
+                if (obj.id && !isNaN(obj.lat) && !isNaN(obj.lon)) {
+                    result.push(obj);
+                }
             }
+            return result;
+        }
+
+        async function loadSiteData() {
+            const csvFilePath = 'categorized_sites_output.csv'; // ENSURE this path is correct
+
+            // Return a Promise that resolves when Papa.parse completes
+            return new Promise((resolve, reject) => {
+                try {
+                    document.getElementById('loadingMap').classList.remove('hidden');
+                    document.getElementById('loadingMessage').textContent = 'Fetching data...';
+
+                    Papa.parse(csvFilePath, {
+                        download: true,
+                        header: true,
+                        dynamicTyping: false,
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            sitesData = results.data
+                                .map(data => {
+                                    let factorScores = {};
+                                    if (data.Factor_Scores && typeof data.Factor_Scores === 'string') {
+                                        try {
+                                            const jsonString = data.Factor_Scores.replace(/'/g, '"');
+                                            // Factor Scores are 0-10 as calculated in Python
+                                            factorScores = JSON.parse(jsonString); 
+                                        } catch (e) {
+                                            factorScores = {}; 
+                                        }
+                                    }
+
+                                    const lat = parseFloat(data.Latitude);
+                                    const lng = parseFloat(data.Longitude);
+
+                                    if (!data['Site Identifier'] || isNaN(lat) || isNaN(lng)) {
+                                        return null; 
+                                    }
+                                    
+                                    // *** CORE CHANGE: Scale CSV Score (0-10) to 0-100 for percentage display ***
+                                    const overallScoreOutOf10 = parseFloat(data.Total_Weighted_Score) || 0;
+                                    const overallScoreOutOf100 = overallScoreOutOf10 * 10; 
+
+                                    return {
+                                        id: String(data['Site Identifier']),
+                                        lat: lat,
+                                        lon: lng,
+                                        city: data.city || 'N/A',
+                                        suburb: data.suburb || 'N/A',
+                                        address: data.address || 'N/A',
+                                        
+                                        loadshedding_category: (data.Adjusted_Risk_Category || data.Base_Risk_Category || 'UNCATEGORIZED').toUpperCase(),
+                                        site_classification: data.Final_Classification || 'N/A',
+                                        
+                                        // Store the score as a percentage (0-100)
+                                        Total_Weighted_Score_100: overallScoreOutOf100,
+                                        
+                                        // Store all Factor Scores (0-10 scale from CSV) for detail display
+                                        factor_scores_all: factorScores,
+                                        
+                                        // Generate trend data based on the score out of 100 for the chart
+                                        trend_data: Array.from({length: 12}, (_, i) => 
+                                            Math.min(100, Math.max(0, overallScoreOutOf100 + Math.sin(i / 2) * 15 + Math.random() * 10 - 5))
+                                        ).map(x => parseFloat(x.toFixed(1))),
+                                    };
+                                })
+                                .filter(site => site !== null); 
+
+                            console.log(`Successfully loaded and parsed ${sitesData.length} sites from CSV.`);
+                            document.getElementById('loadingMap').classList.add('hidden');
+
+                            // Ensure filters are populated now that sitesData is available
+                            setupFilters();
+                            filterAndRender();
+
+                            resolve();
+                        },
+                        error: function(err, file, inputElem, reason) {
+                            console.error('Papa Parse Error:', reason);
+                            document.getElementById('loadingMap').classList.add('hidden');
+                            reject(new Error(`Papa Parse Error: ${reason}`));
+                        }
+                    });
+
+                } catch (error) {
+                    console.error('Failed to load site data from CSV. Falling back to demo data.', error);
+                    document.getElementById('loadingMap').classList.add('hidden');
+                    document.getElementById('loadingMessage').textContent = 'CSV failed to load. Using demo data.';
+                    
+                    // NOTE: You must update your demoData to match the new structure (Total_Weighted_Score_100, factor_scores_all)
+                    sitesData = demoData; 
+                    setupFilters();
+                    filterAndRender();
+                    resolve();
+                }
+            });
+        }
+
+        function setupFilters() {
+            const cityFilter = document.getElementById('cityFilter');
+            const categoryFilter = document.getElementById('categoryFilter');
+            const searchFilter = document.getElementById('searchFilter');
+
+            cityFilter.innerHTML = '';
+            categoryFilter.innerHTML = '';
+            
+            cityFilter.add(new Option('All Cities/Muni', 'All'));
+            getUniqueValues('city').forEach(city => {
+                if (city && city !== 'N/A') {
+                    cityFilter.add(new Option(city, city));
+                }
+            });
+
+            categoryFilter.add(new Option('All Categories', 'All'));
+            ['GREEN', 'AMBER', 'RED', 'UNCATEGORIZED'].forEach(cat => {
+                categoryFilter.add(new Option(cat, cat));
+            });
+            
+            // --- Event Listeners ---
+            cityFilter.addEventListener('change', (e) => {
+                currentFilter.city = e.target.value;
+                filterAndRender();
+            });
+            
+            categoryFilter.addEventListener('change', (e) => {
+                currentFilter.category = e.target.value;
+                filterAndRender();
+            });
+            
+            let searchTimeout;
+            searchFilter.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    currentFilter.search = e.target.value.toLowerCase().trim();
+                    filterAndRender();
+                }, 300);
+            });
+            
+            currentFilter.city = 'All';
+            currentFilter.category = 'All';
+            currentFilter.search = '';
         }
 
         // --- MAPPING AND VISUALIZATION FUNCTIONS ---
 
         function getMarkerColor(category) {
             switch (category) {
-                case 'GREEN': return '#10B981'; // Tailwind green-500
-                case 'AMBER': return '#F59E0B'; // Tailwind amber-500
-                case 'RED': return '#EF4444'; // Tailwind red-500
+                case 'GREEN': return '#10B981';
+                case 'AMBER': return '#D97706';
+                case 'RED': return '#EF4444';
                 default: return '#6B7280'; // Gray (UNCATEGORIZED)
+            }
+        }
+
+        function getCategoryClass(category) {
+            switch (category) {
+                case 'GREEN': return 'bg-green-600';
+                case 'AMBER': return 'bg-amber-600';
+                case 'RED': return 'bg-red-600';
+                default: return 'bg-gray-500'; 
             }
         }
 
@@ -160,21 +543,17 @@
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
             
-            // Add the cluster group to the map
             markers.addTo(map);
         }
 
         function renderMap(data) {
-            // Clear all existing markers from the cluster group
             markers.clearLayers();
             
             data.forEach(site => {
-                // Skip rendering if LAT/LON is invalid or missing
                 if (isNaN(site.lat) || isNaN(site.lon)) return; 
 
                 const color = getMarkerColor(site.loadshedding_category);
-                
-                // 1. Marker (using CircleMarker for custom color, which works with clustering)
+
                 const marker = L.circleMarker([site.lat, site.lon], {
                     radius: 8,
                     fillColor: color,
@@ -184,30 +563,22 @@
                     fillOpacity: 0.9
                 });
 
-                // Popup Content
+                const score = site.Total_Weighted_Score ? site.Total_Weighted_Score.toFixed(2) : (site.Total_Weighted_Score_100 ? (site.Total_Weighted_Score_100/10).toFixed(2) : 'N/A');
                 const popupContent = `
                     <div class="font-bold text-lg">${site.id} (${site.loadshedding_category})</div>
                     <div class="text-sm">
                         <p><strong>Location:</strong> ${site.suburb}, ${site.city}</p>
-                        <p><strong>Address:</strong> ${site.address}</p>
-                        <p><strong>Est. EV Demand:</strong> ${site.demand_index}%</p>
-                        <p><strong>Charging Range:</strong> ${site.charging_radius_km} km radius</p>
+                        <p><strong>Total Score:</strong> ${score}</p>
+                        <button onclick="displaySiteDetails('${site.id}')" class="mt-2 text-indigo-600 hover:text-indigo-800 font-medium">View Details ↓</button>
                     </div>
                 `;
                 marker.bindPopup(popupContent);
 
-                // Add the marker to the cluster group
                 marker.addTo(markers);
 
-                // Click event to link marker to list item
+                // Click event to show details panel
                 marker.on('click', () => {
-                    const listItem = document.getElementById(`site-${site.id}`);
-                    if (listItem) {
-                        listItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        // Briefly highlight the list item
-                        listItem.classList.add('shadow-2xl', 'scale-105');
-                        setTimeout(() => listItem.classList.remove('shadow-2xl', 'scale-105'), 1500);
-                    }
+                    displaySiteDetails(site.id);
                 });
             });
 
@@ -222,50 +593,256 @@
         function renderSiteList(data) {
             const listContainer = document.getElementById('sitesList');
             listContainer.innerHTML = '';
-            
+
             data.forEach(site => {
-                const category = site.loadshedding_category.toUpperCase();
-                const colorClass = category === 'RED' ? 'red-bg' : category === 'AMBER' ? 'amber-bg' : category === 'GREEN' ? 'green-bg' : 'bg-gray-200';
-                const demandColor = site.demand_index > 70 ? 'text-green-600' : site.demand_index > 40 ? 'text-amber-600' : 'text-red-600';
+                const category = site.loadshedding_category ? site.loadshedding_category.toUpperCase() : 'UNCATEGORIZED';
+                const colorClass = 
+                    category === 'RED' ? 'red-bg' : 
+                    category === 'AMBER' ? 'amber-bg' : 
+                    category === 'GREEN' ? 'green-bg' : 
+                    'bg-gray-200';
                 
+                const score = site.Total_Weighted_Score_100 ? site.Total_Weighted_Score_100.toFixed(1) : 'N/A';
+
                 const card = document.createElement('div');
                 card.id = `site-${site.id}`;
-                card.className = `data-card p-4 bg-white rounded-xl shadow flex justify-between items-center ${colorClass}`;
-                
+                card.className = `data-card p-4 rounded-xl shadow flex flex-col gap-2 ${colorClass}`;
+
+                // Small factor summary for quick glance (raw 0-10 scores if available)
+                let factorSummary = '';
+                if (site.factor_scores_all) {
+                    const fs = site.factor_scores_all;
+                    factorSummary = `<div class="text-sm text-gray-700">
+                        Factors:
+                        LS ${((fs.loadshedding)||0).toFixed(1)} |
+                        D ${((fs.demand)||0).toFixed(1)} |
+                        P ${((fs.physical)||0).toFixed(1)}
+                    </div>`;
+                }
+
                 card.innerHTML = `
-                    <div>
-                        <p class="text-lg font-semibold">${site.id} - ${site.city}, ${site.suburb}</p>
-                        <p class="text-sm text-gray-600">${site.address}</p>
-                    </div>
-                    <div class="text-right">
-                        <p class="font-bold text-xl">${category}</p>
-                        <p class="text-sm ${demandColor}">Demand: ${site.demand_index}%</p>
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <p class="text-lg font-semibold">${site.id} - ${site.city}, ${site.suburb}</p>
+                            <p class="text-sm text-gray-600">${site.address}</p>
+                            ${factorSummary}
+                        </div>
+                        <div class="text-right">
+                            <p class="font-bold text-xl">${score}</p>
+                            <p class="text-sm text-gray-600">Weighted Score</p>
+                        </div>
                     </div>
                 `;
 
                 card.addEventListener('click', () => {
-                    if (!isNaN(site.lat) && !isNaN(site.lon)) {
-                        // Fly to the marker location
-                        map.flyTo([site.lat, site.lon], 14); 
+                    displaySiteDetails(site.id);
 
-                        // Find the corresponding marker and open its popup
+                    // Map interactivity
+                    if (!isNaN(site.lat) && !isNaN(site.lon)) {
+                        map.setView([site.lat, site.lon], 12); // Center map on clicked site
+                        // Find the corresponding marker to open its popup
                         markers.eachLayer(layer => {
-                            // Check if the marker's coordinates match the site's coordinates
                             if (layer.getLatLng().lat.toFixed(6) === site.lat.toFixed(6) && 
                                 layer.getLatLng().lng.toFixed(6) === site.lon.toFixed(6)) {
-                                
-                                // Zoom to the marker first to ensure it's visible, then open the popup
-                                markers.zoomToShowLayer(layer, () => {
-                                    layer.openPopup();
-                                });
+                                layer.openPopup(); 
+                                return;
                             }
                         });
                     }
                 });
-                
+
                 listContainer.appendChild(card);
             });
         }
+        
+        // --- DISPLAY SITE DETAILS ---
+        window.displaySiteDetails = function(siteId) {
+            const site = sitesData.find(s => s.id === siteId);
+            if (!site) return;
+
+            const panel = document.getElementById('siteDetailsPanel');
+            panel.classList.remove('hidden');
+
+            // Scroll to the detail panel
+            panel.scrollIntoView({ behavior: 'smooth' });
+            
+            // Use the Python weights for reference display
+            const WEIGHTS = WEIGHTS_JS;
+
+            // --- 1. Top Section ---
+            document.getElementById('detailSiteTitle').textContent = `Site Details: ${site.id}`;
+            document.getElementById('detailRiskCategory').textContent = site.loadshedding_category.toUpperCase();
+            document.getElementById('detailRiskCategory').className = getCategoryClass(site.loadshedding_category) + ' text-2xl font-bold px-3 py-1 rounded-full text-white';
+
+            // --- 2. Overall Score Card (OUT OF 100 PERCENTAGE) ---
+            const overallScore_100 = site.Total_Weighted_Score_100 ? site.Total_Weighted_Score_100.toFixed(1) : 'N/A';
+            const scorePercent = site.Total_Weighted_Score_100 ? site.Total_Weighted_Score_100 : 0; 
+
+            document.getElementById('detailScoreValue').textContent = overallScore_100;
+            document.getElementById('scoreRingContainer').style.setProperty('--score-percent', `${scorePercent}%`);
+
+            // --- 3. Key Metric Boxes (Factor Scores 0-10 shown as /10) ---
+            const fs = site.factor_scores_all || {};
+
+            // Show raw 0-10 values (as provided by the ML model output)
+            document.getElementById('detailLoadsheddingScore').textContent = `${((fs.loadshedding)||0).toFixed(1)} / 10`;
+            document.getElementById('detailSecurityScore').textContent = `${((fs.security)||0).toFixed(1)} / 10`;
+            document.getElementById('detailDemandIndex').textContent = `${((fs.demand)||0).toFixed(1)} / 10`;
+            document.getElementById('detailPermittingScore').textContent = `${((fs.permitting)||0).toFixed(1)} / 10`;
+            document.getElementById('detailInteropScore').textContent = `${((fs.interop)||0).toFixed(1)} / 10`;
+            document.getElementById('detailInfrastructureScore').textContent = `${((fs.physical)||0).toFixed(1)} / 10`;
+            document.getElementById('detailOpCostScore').textContent = `${((fs.opCost)||0).toFixed(1)} / 10`;
+
+            // --- 4. Weighting Breakdown (Displaying the contribution, scaled to 100) ---
+            const calculateWeightedContribution100 = (factorKey) => {
+                const score = fs[factorKey] || 0; // 0-10 scale
+                const weight = WEIGHTS[factorKey] || 0;
+                return (score * weight * 10).toFixed(1);
+            };
+            
+            // Ensure your HTML has elements with these IDs to display ALL 7 factors:
+            document.getElementById('wDemand').textContent = calculateWeightedContribution100('demand');
+            document.getElementById('wGrid').textContent = calculateWeightedContribution100('loadshedding');
+            document.getElementById('wSecurity').textContent = calculateWeightedContribution100('security');
+            document.getElementById('wInfrastructure').textContent = calculateWeightedContribution100('physical'); 
+            document.getElementById('wPermitting').textContent = calculateWeightedContribution100('permitting');
+            document.getElementById('wInterop').textContent = calculateWeightedContribution100('interop');
+            document.getElementById('wOpCost').textContent = calculateWeightedContribution100('opCost');
+            
+            // Total should match the overall score (Total_Weighted_Score_100)
+            document.getElementById('wTotal').textContent = overallScore_100; 
+
+            // --- 5. Chart Update (show factor raw scores + weighted contributions) ---
+            updateViabilityChart(fs, site.Total_Weighted_Score_100 || 0, site.id);
+        }
+
+        // New: Chart that shows factor breakdown (raw scores 0-10) and weighted contributions (0-100)
+        function updateViabilityChart(factorScores, overallScore100, siteId) {
+            const ctx = document.getElementById('viabilityChart').getContext('2d');
+            const labels = ['loadshedding','security','demand','permitting','interop','physical','opCost'];
+            
+            // Raw scores (0-10)
+            const rawScores = labels.map(k => parseFloat(((factorScores[k] || 0)).toFixed(2)));
+
+            // Weighted contributions scaled to 0-100 (score * weight * 10)
+            const weighted = labels.map(k => parseFloat(((factorScores[k] || 0) * (WEIGHTS_JS[k] || 0) * 10).toFixed(2)));
+
+            if (viabilityChart) {
+                viabilityChart.destroy();
+            }
+
+            viabilityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels.map(l => l.charAt(0).toUpperCase() + l.slice(1)), // prettify
+                    datasets: [
+                        {
+                            label: `Raw Scores (0-10)`,
+
+                            data: rawScores,
+                            borderColor: '#4f46e5',
+                            backgroundColor: 'rgba(79, 70, 229, 0.08)',
+                            tension: 0.3,
+                            pointBackgroundColor: '#4f46e5',
+                            borderWidth: 2,
+                            yAxisID: 'y',
+                            fill: false
+                        },
+                        {
+                            label: `Weighted Contribution (0-100)`,
+
+                            data: weighted,
+                            borderColor: '#e11d48',
+                            backgroundColor: 'rgba(225, 29, 72, 0.06)',
+                            tension: 0.3,
+                            pointBackgroundColor: '#e11d48',
+                            borderWidth: 2,
+                            yAxisID: 'y1',
+                            fill: true
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            min: 0,
+                            max: 10,
+                            title: { display: true, text: 'Raw Score (0-10)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'Weighted Contribution (0-100)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: true, position: 'top' },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+
+        function renderChart(trendData, siteId) {
+            const ctx = document.getElementById('viabilityChart').getContext('2d');
+            const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            
+            if (viabilityChart) {
+                viabilityChart.destroy();
+            }
+
+            viabilityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `Viability Score Trend for Site ${siteId}`,
+                        data: trendData,
+                        borderColor: '#4f46e5', // Indigo-600
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        tension: 0.3,
+                        pointBackgroundColor: '#4f46e5',
+                        borderWidth: 2,
+                        fill: true,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            min: 0,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Score'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
 
         function updateStats(data) {
             document.getElementById('siteCount').querySelector('p:last-child').textContent = data.length;
@@ -275,6 +852,7 @@
             const redCount = data.filter(s => s.loadshedding_category === 'RED').length;
             
             document.getElementById('greenCount').querySelector('p:last-child').textContent = greenCount;
+            document.getElementById('amberCount').querySelector('p:last-child').textContent = amberCount;
             document.getElementById('redCount').querySelector('p:last-child').textContent = redCount;
         }
 
@@ -282,82 +860,65 @@
         // --- FILTERING AND INIT FUNCTIONS ---
 
         function getUniqueValues(key) {
-            // Only use data that has been loaded
             if (sitesData.length === 0) return ['All'];
-            return ['All', ...new Set(sitesData.map(site => site[key]).filter(Boolean).sort())];
-        }
-
-        function populateFilters() {
-            const cityFilter = document.getElementById('cityFilter');
-            const suburbFilter = document.getElementById('suburbFilter');
-
-            // Reset filters
-            cityFilter.innerHTML = '';
-            suburbFilter.innerHTML = '';
-            
-            getUniqueValues('city').forEach(city => {
-                cityFilter.add(new Option(city, city));
-            });
-            
-            // Initial load for suburbs (only 'All' unless a city is selected)
-            suburbFilter.add(new Option('All', 'All'));
-            suburbFilter.disabled = true;
-
-            cityFilter.addEventListener('change', (e) => {
-                currentFilter.city = e.target.value;
-                currentFilter.suburb = 'All'; // Reset suburb on city change
-                
-                // Repopulate suburb filter based on selected city
-                suburbFilter.innerHTML = '';
-                suburbFilter.add(new Option('All', 'All'));
-
-                if (currentFilter.city !== 'All') {
-                    suburbFilter.disabled = false;
-                    const availableSuburbs = sitesData
-                        .filter(site => site.city === currentFilter.city)
-                        .map(site => site.suburb)
-                        .filter(Boolean); // Filter out null/empty suburbs
-                    
-                    [...new Set(availableSuburbs)].sort().forEach(suburb => {
-                        suburbFilter.add(new Option(suburb, suburb));
-                    });
-                } else {
-                    suburbFilter.disabled = true;
-                }
-                
-                filterAndRender();
-            });
-
-            suburbFilter.addEventListener('change', (e) => {
-                currentFilter.suburb = e.target.value;
-                filterAndRender();
-            });
+            return [...new Set(sitesData.map(site => site[key]).filter(Boolean).sort())];
         }
 
         function filterAndRender() {
             let filteredData = sitesData;
+            const { search, city, category } = currentFilter;
 
-            if (currentFilter.city !== 'All') {
-                filteredData = filteredData.filter(site => site.city === currentFilter.city);
+            // 1. Apply Search Filter
+            if (search) {
+                filteredData = filteredData.filter(site => 
+                    (site.id && site.id.toLowerCase().includes(search)) ||
+                    (site.city && site.city.toLowerCase().includes(search)) ||
+                    (site.address && site.address.toLowerCase().includes(search))
+                );
+            }
+            
+            // 2. Apply City/Town/Muni Filter
+            if (city !== 'All') {
+                filteredData = filteredData.filter(site => site.city === city);
             }
 
-            if (currentFilter.suburb !== 'All') {
-                filteredData = filteredData.filter(site => site.suburb === currentFilter.suburb);
+            // 3. Apply Category Filter
+            if (category !== 'All') {
+                filteredData = filteredData.filter(site => site.loadshedding_category === category);
             }
             
             // Re-render components with the new filtered data
             renderMap(filteredData);
             renderSiteList(filteredData);
             updateStats(filteredData);
+
+            // Update details if the currently viewed site is still visible
+            const detailPanel = document.getElementById('siteDetailsPanel');
+            const currentSiteTitle = document.getElementById('detailSiteTitle').textContent;
+            const currentSiteIdMatch = currentSiteTitle.match(/Site Details: (OS\d+)/);
+            const currentSiteId = currentSiteIdMatch ? currentSiteIdMatch[1] : null;
+
+            if (currentSiteId && !filteredData.some(s => s.id === currentSiteId)) {
+                detailPanel.classList.add('hidden');
+            } else if (currentSiteId) {
+                displaySiteDetails(currentSiteId);
+            }
         }
 
-        // Initial setup
-        window.onload = async () => {
+        // --- INITIALIZATION FUNCTION ---
+        async function init() {
             createMap();
-            await loadSiteData();
-            populateFilters();
+            await loadSiteData(); // now waits for Papa.parse to finish and setup filters internally
             filterAndRender();
-        };
+
+            // Optionally, load details for the first site on initial load
+            if (sitesData.length > 0) {
+                 displaySiteDetails(sitesData[0].id);
+            }
+        }
+
+        // Initial setup call
+        window.onload = init;
 
     </script>
 </body>
