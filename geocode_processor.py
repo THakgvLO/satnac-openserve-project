@@ -3,9 +3,13 @@ import json
 import time
 import requests
 import sys
+import os  # <-- added import for os
 
 # --- CONFIGURATION ---
-OPENCAGE_API_KEY = "73cfbf85a61941609096d01aa3731022"
+OPENCAGE_API_KEY = os.getenv("OPENCAGE_API_KEY")  # <-- use env var
+if not OPENCAGE_API_KEY:
+    print("[FATAL] OPENCAGE_API_KEY not set in environment.")
+    sys.exit(1)
 
 INPUT_CSV_FILE = "openserve_property_sites.csv"
 OUTPUT_CSV_FILE = "Openserve_Sites_Geocoded.csv"
