@@ -49,24 +49,18 @@ Suggested improvements (next steps)
 ## How to run locally (Windows)
 Note: adapt commands to exact scripts in this repo.
 
-1. Clone the repo
+1. Clone the repo:
    git clone <repo-url>
    cd SATNAC_Openserve_Prototype
 
-2. Create Python venv and install dependencies
+2. Create Python venv and install dependencies:
    python -m venv .venv
    .venv\Scripts\activate
    pip install -r requirements.txt
 
-3. Run data pipeline (example)
-   python scripts/run_pipeline.py --input data/inputs --output results/
-
-4. Run dashboard (example)
-   python app/server.py
-   # or
-   streamlit run app/dashboard.py
-
-Open http://localhost:5000 (or the port printed by the server) to view the interactive map.
+3. Run the automated script:
+   python run_all.py
+   python run_all.py --serve --open-browser
 
 ## How to contribute
 - Fork the repo and open a pull request with a clear description of changes.
