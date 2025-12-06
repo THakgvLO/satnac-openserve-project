@@ -1,4 +1,4 @@
-# SATNAC — Openserve EV Charging Site Decision Support (Finalist)
+# SATNAC - Openserve EV Charging Site Decision Support (Finalist)
 
 Finalist for the SATNAC Industry Solutions Challenge 2025.
 
@@ -10,7 +10,7 @@ Key highlights:
 - Factors: loadshedding risk, security, transformer capacity, operational cost, grid resilience, site footprint, connectivity.
 - Used K‑Means clustering on weighted scores to generate Green/Amber/Red rollout categories.
 - Delivered as a Python ML pipeline with an interactive web dashboard (Leaflet.js for maps, Chart.js for visualizations) for geospatial exploration and explainability.
-- Reached the SATNAC 2025 finale — demonstrated strong modelling and explainability despite methodological limitations.
+- Reached the SATNAC 2025 finale - demonstrated strong modelling and explainability despite methodological limitations.
 
 ## What the project does
 - Ingests geospatial site candidates and auxiliary datasets (grid assets, security layers, connectivity, transformer specs, cost estimates).
@@ -21,7 +21,7 @@ Key highlights:
 ## Technical stack
 - Python (data processing, feature engineering, ML pipeline)
 - Common Python libs: pandas, geopandas, scikit‑learn, rasterio (or similar)
-- Web dashboard: Leaflet.js + Chart.js (frontend), lightweight Python server (Flask/FastAPI/Streamlit – adapt to repo)
+- Web dashboard: Leaflet.js + Chart.js (frontend), lightweight Python server (Flask/FastAPI/Streamlit - adapt to repo)
 - GIS data formats: GeoJSON / Shapefiles, CSVs for attributes
 - Tested on Windows (development environment notes below)
 
@@ -35,7 +35,7 @@ Be aware of these caveats observed during development and evaluation:
 - Weight subjectivity: factor weights were expert‑informed but not optimized via robust stakeholder calibration or automated tuning.
 - K‑Means assumptions: K‑Means presumes spherical clusters and equal variance; may misclassify spatially irregular or multimodal distributions.
 - Data quality & granularity: transformer capacities, real operational load and real‑time grid constraints may be coarse or out‑of‑date.
-- Validation: limited ground‑truth validation and field testing — segmentation is indicative, not definitive.
+- Validation: limited ground‑truth validation and field testing - segmentation is indicative, not definitive.
 - Operational constraints: site permitting, land ownership, environmental impact and commercial negotiations are not modelled.
 - Explainability: aggregated scores can obscure tradeoffs unless users inspect component factor contributions.
 
